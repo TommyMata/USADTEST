@@ -1,42 +1,44 @@
-# Call Middleware - Phone Call Transcription System
+# Call Middleware - Real-Time Phone Call Transcription System
 
-Complete system to simulate phone calls, capture audio via WebSocket and process it with AI for real-time transcription.
+Complete system for real-time audio transcription using AI. Features **streaming transcription** that displays text as you speak, with support for browser-based WebRTC calls and simulated phone calls.
 
 ## 🔄 How Does the System Work?
 
-### System Architecture
+### System Architecture (Real-Time Streaming)
 
 ```
-┌─────────────────────┐         WebSocket          ┌──────────────────────┐
-│  call_simulator.py  │ ───────────────────────────> │   middleware.py      │
-│  (Client)           │    Audio streaming          │   (Server)           │
-│                     │    in 3200-byte chunks      │                      │
-│  - Reads sample.wav │                             │  - Receives chunks   │
-│  - Sends chunks     │                             │  - Accumulates audio │
-│  - Simulates call   │                             │  - Processes with AI │
-└─────────────────────┘                             └──────────────────────┘
-                                                              │
-                                                              ▼
-                                                    ┌──────────────────────┐
-                                                    │   Deepgram API       │
-                                                    │   (Transcription)    │
-                                                    │                      │
-                                                    │  - Receives audio    │
-                                                    │  - Detects language  │
-                                                    │  - Transcribes text  │
-                                                    └──────────────────────┘
+┌──────────────────────┐       WebSocket        ┌──────────────────────┐       WebSocket       ┌──────────────────────┐
+│  web_client.html     │ ◄──────────────────────►│   middleware.py      │◄─────────────────────►│   Deepgram API       │
+│  (Browser)           │   Audio PCM chunks      │   (Server)           │   Streaming audio     │   (Live Streaming)   │
+│                      │   + Real-time results   │                      │   + Live transcripts  │                      │
+│  - Captures mic      │                         │  - Relays audio      │                       │  - Speech-to-text    │
+│  - Sends PCM audio   │                         │  - Forwards results  │                       │  - Interim results   │
+│  - Shows transcript  │                         │  - Bridges WebSockets│                       │  - Final results     │
+└──────────────────────┘                         └──────────────────────┘                       └──────────────────────┘
+                                                            ▲
+                                                            │
+                                                            │ WebSocket (alternative)
+                                                            │
+                                                  ┌──────────────────────┐
+                                                  │  call_simulator.py   │
+                                                  │  (CLI Client)        │
+                                                  │                      │
+                                                  │  - Reads sample.wav  │
+                                                  │  - Sends chunks      │
+                                                  │  - Simulates call    │
+                                                  └──────────────────────┘
 ```
 
-### Processing Flow
+### Processing Flow (Streaming Mode)
 
-1. **`middleware.py`** (Server) - Starts and waits for WebSocket connections
-2. **`call_simulator.py`** (Client) - Connects to server and simulates a call
-3. Client reads `sample.wav` and sends it in **3200-byte chunks**
-4. Server **accumulates all chunks** in a buffer
-5. When call ends (WebSocket closes):
-   - Server processes complete audio with **Deepgram**
-   - Gets transcription, confidence and detected language
-   - Displays results in console
+1. **Browser/Client** connects to `middleware.py` via WebSocket
+2. **Audio capture** begins (microphone or file)
+3. Audio is sent in **real-time chunks** (PCM 16-bit, 16kHz)
+4. **Middleware** relays chunks to **Deepgram streaming API**
+5. **Deepgram** returns:
+   - **Interim results** (partial transcription while speaking)
+   - **Final results** (complete phrases)
+6. **Results appear in real-time** on web interface
 
 ## 📋 Requirements
 
@@ -57,18 +59,31 @@ DEEPGRAM_API_KEY=your_api_key_here
 
 ## 🚀 Usage
 
-### Option 1: Complete Call Simulation System (RECOMMENDED)
+### Option 1: Web Browser Demo (RECOMMENDED - Real-Time Streaming)
 
-This is the main project flow - simulates a real phone call:
+The easiest way to see real-time transcription in action:
+
+**Step 1: Start the server**
+```bash
+python middleware.py
+```
+
+**Step 2: Open your browser**
+Go to: **http://localhost:8000**
+
+**Step 3: Use the demo**
+1. Click **"Start Call"**
+2. Allow microphone access
+3. **Speak** - see text appear in real-time!
+4. Click **"End Call"**
+
+### Option 2: Command-Line Call Simulation
+
+For testing with audio files:
 
 **Step 1: Start the middleware server**
 ```bash
 python middleware.py
-```
-You'll see:
-```
-🚀 Middleware server started at ws://localhost:8000/stream
-⏳ Waiting for incoming calls...
 ```
 
 **Step 2: In another terminal, run the simulator**
@@ -76,58 +91,72 @@ You'll see:
 python call_simulator.py
 ```
 
-The simulator:
-- Connects to server via WebSocket
-- Reads `sample.wav` and sends it in chunks (simulating live audio)
-- Closes connection
-
-The server:
-- Receives all chunks
-- When call ends, processes audio with Deepgram
-- Displays complete transcription
-
-**Option 2: Automated Script**
+**Option 3: Automated Script**
 ```bash
 python test_call_system.py
 ```
-This script starts both processes automatically.
 
 ## 📁 Project Files
 
-### 🔥 Main Files (Call System)
+### 🔥 Main Files
 
-- **`middleware.py`**: WebSocket server that receives audio and processes it with Deepgram
-  - Listens on `ws://localhost:8000/stream`
-  - Accumulates audio chunks
-  - Transcribes when call ends
+- **`middleware.py`**: WebSocket server with streaming transcription
+  - Serves web client at `http://localhost:8000`
+  - Relays audio to Deepgram streaming API
+  - Forwards real-time transcriptions to browser
   
-- **`call_simulator.py`**: Client that simulates a phone call
-  - Reads `sample.wav`
-  - Sends audio in chunks via WebSocket
-  - Simulates real-time transmission
+- **`web_client.html`**: Browser-based WebRTC interface
+  - Captures microphone audio
+  - Converts to PCM format
+  - Displays transcriptions in real-time
+  - Shows interim and final results
 
-- **`test_call_system.py`**: Automated script that runs both processes
-- **`sample.wav`**: Sample audio file (204KB)
+- **`call_simulator.py`**: CLI client for testing with audio files
+  - Reads `sample.wav`
+  - Sends audio chunks via WebSocket
+  - Simulates phone call transmission
+
+- **`test_call_system.py`**: Automated testing script
+- **`sample.wav`**: Sample audio file for testing (204KB)
+- **`WEB_DEMO.md`**: Web client documentation
 
 ## 🎯 Features
 
-- ✅ Automatic language detection
-- ✅ Smart text formatting
-- ✅ Transcription confidence indicator
-- ✅ WAV file support
-- ✅ Robust error handling
+- ✅ **Real-time streaming transcription** - See text as you speak
+- ✅ **Interim results** - Partial transcriptions while speaking
+- ✅ **Final results** - Complete phrases with high accuracy
+- ✅ **Automatic language detection** - Spanish, English, and more
+- ✅ **Browser-based interface** - No installation needed
+- ✅ **Smart text formatting** - Proper punctuation and capitalization
+- ✅ **Confidence indicators** - Know transcription reliability
+- ✅ **Multi-language support** - Speak in any supported language
+- ✅ **WebRTC audio capture** - Professional-grade microphone processing
+- ✅ **Robust error handling** - Graceful connection management
 
 ## 🔄 System Flow
 
-### Main System (Call Simulation)
+### Web Browser Flow (Real-Time Streaming)
+```
+1. User opens http://localhost:8000 in browser
+2. Clicks "Start Call" and allows microphone access
+3. Browser captures audio and converts to PCM format
+4. Audio chunks sent to middleware via WebSocket
+5. Middleware forwards chunks to Deepgram streaming API
+6. Deepgram sends back interim transcriptions (while speaking)
+7. Deepgram sends final transcriptions (complete phrases)
+8. Middleware relays results to browser in real-time
+9. User sees text appearing as they speak
+10. Click "End Call" to finish
+```
+
+### CLI Simulation Flow
 ```
 1. Middleware server starts and waits for connections
-2. Client connects via WebSocket
-3. Client sends audio in 3200-byte chunks
-4. Server accumulates all chunks
-5. Client closes connection (end of call)
-6. Server processes complete audio with Deepgram AI
-7. Server displays transcription
+2. call_simulator.py connects via WebSocket
+3. Simulator sends audio file in chunks
+4. Middleware relays to Deepgram streaming
+5. Transcriptions printed to console
+6. Connection closes when file complete
 ```
 
 ## 🌐 Supported Languages
@@ -141,109 +170,123 @@ Automatic language detection is enabled by default.
 
 ## 📊 Example Output
 
-### Middleware Server (`middleware.py`)
+### Web Browser Interface
 ```
-🚀 Middleware server started at ws://localhost:8000/stream
-⏳ Waiting for incoming calls...
-
-📞 Call started - Client connected
-📡 Chunk received: 3200 bytes (Total: 3200 bytes)
-📡 Chunk received: 3200 bytes (Total: 6400 bytes)
-...
-📡 Chunk received: 2768 bytes (Total: 204368 bytes)
-📴 Call ended - Processing complete audio...
-🤖 Sending 204368 bytes to Deepgram for transcription...
-
-============================================================
-🔊 CALL TRANSCRIPTION:
-============================================================
-   📝 Text: Hello. This is a robotic test for development purposes.
-   ✅ Confidence: 93.16%
-   🌐 Language: en
-============================================================
-```
-
-### Client Simulator (`call_simulator.py`)
-```
-📞 Starting phone call simulation...
-🔌 Connecting to middleware server...
-
-✅ Connected to server
-📁 File: sample.wav (204368 bytes)
-📡 Sending audio in 3200-byte chunks...
-
-   Chunk #1: 3200 bytes sent (Total: 3200/204368)
-   Chunk #2: 3200 bytes sent (Total: 6400/204368)
-   ...
-   Chunk #64: 2768 bytes sent (Total: 204368/204368)
-
-✅ Transmission completed: 64 chunks, 204368 total bytes
-📴 Closing connection...
+┌─────────────────────────────────────────────────────┐
+│        📞 Real-Time Call Transcription Demo         │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  Status: 🟢 Recording... Speak now!                │
+│                                                     │
+│  [🎤 Start Call]  [⏹️ End Call]                    │
+│                                                     │
+│  Transcription:                                     │
+│  ┌───────────────────────────────────────────────┐ │
+│  │ Hello, this is a real-time transcription     │ │
+│  │ demo using AI. The text appears as I speak.  │ │
+│  └───────────────────────────────────────────────┘ │
+│                                                     │
+│  Confidence: 97.80%    Language: EN    Duration: 8s│
+│                                                     │
+└─────────────────────────────────────────────────────┘
 ```
 
-✅ Conectado al servidor
-📁 Archivo: sample.wav (204368 bytes)
-📡 Enviando audio en chunks de 3200 bytes...
+### Middleware Server Console (`middleware.py`)
+```
+[SERVER] Middleware server started at ws://localhost:8000/stream
+[SERVER] Waiting for incoming calls...
 
-   Chunk #1: 3200 bytes enviados (Total: 3200/204368)
-   Chunk #2: 3200 bytes enviados (Total: 6400/204368)
-   ...
-   Chunk #64: 2768 bytes enviados (Total: 204368/204368)
+INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     127.0.0.1:52189 - "WebSocket /stream" [accepted]
+[CALL] Started - Client connected
+[DEEPGRAM] Connected to streaming API
 
-✅ Transmisión completada: 64 chunks, 204368 bytes totales
-📴 Cerrando conexión...
+[TRANSCRIPT] [INTERIM] Hello, this
+[TRANSCRIPT] [FINAL] Hello, this is a real-time
+[TRANSCRIPT] [INTERIM] transcription demo
+[TRANSCRIPT] [FINAL] transcription demo using AI.
+[TRANSCRIPT] [INTERIM] The text appears
+[TRANSCRIPT] [FINAL] The text appears as I speak.
+
+[CALL] Ended
+[FINAL TRANSCRIPT] Hello, this is a real-time transcription demo using AI. The text appears as I speak.
 ```
 
-## 🛠️ Personalización
-
-### Modificar el tamaño de chunks
 ## 🛠️ Customization
 
-### Modify chunk size
+### Configure streaming options
 
-In `call_simulator.py`, change the chunk size:
+In `middleware.py`, modify the Deepgram WebSocket URL:
+```python
+deepgram_url = f"wss://api.deepgram.com/v1/listen?" \
+               f"model=nova-2&" \           # AI model
+               f"language=multi&" \          # Auto-detect or specify (en, es, etc.)
+               f"smart_format=true&" \       # Smart formatting
+               f"interim_results=true&" \    # Show partial results
+               f"punctuate=true&" \          # Add punctuation
+               f"encoding=linear16&" \       # PCM format
+               f"sample_rate=16000"          # Audio sample rate
+```
+
+### Modify audio capture settings
+
+In `web_client.html`, adjust microphone settings:
+```javascript
+const stream = await navigator.mediaDevices.getUserMedia({ 
+    audio: {
+        channelCount: 1,      // Mono audio
+        sampleRate: 16000     // 16kHz (Deepgram optimized)
+    }
+});
+```
+
+### Change chunk size for CLI simulator
+
+In `call_simulator.py`:
 ```python
 while chunk := f.read(3200):  # Change 3200 to desired size
 ```
 
-### Configure transcription options
-
-In `middleware.py`, customize Deepgram options:
-```python
-response = deepgram.listen.v1.media.transcribe_file(
-    request=audio_data,
-    model="nova-2",           # AI model
-    smart_format=True,        # Smart formatting
-    detect_language=True,     # Automatic detection
-    diarize=True,            # Separate by speakers
-    punctuate=True,          # Add punctuation
-    utterances=True,         # Split by phrases
-)
-```
-
 ## ❓ Frequently Asked Questions
 
-### Which file actually processes the audio?
+### How does real-time streaming work?
 
-**`middleware.py`** is the file that processes audio with AI.
+Instead of waiting for the entire call to finish, audio is sent to Deepgram's streaming API in small chunks. Deepgram processes audio continuously and returns:
+- **Interim results**: Partial transcriptions (temporary)
+- **Final results**: Complete phrases (permanent)
 
-### How does the call simulation work?
+### What's the difference between interim and final results?
 
-1. `call_simulator.py` acts as a **phone** making a call
-2. `middleware.py` acts as a **telephony server** receiving the call
-3. Audio is transmitted in **real-time** (small chunks with delays)
-4. When call ends, server processes all accumulated audio
+- **Interim**: Appear while you're still speaking (gray text in browser)
+- **Final**: Confirmed complete phrases (black text in browser)
+
+### Can I use this for actual phone calls?
+
+Yes! You could integrate with:
+- **FreeSWITCH** or **Kamailio** for SIP calls
+- **Twilio** for phone number integration
+- **WebRTC** for browser-to-browser calls (already implemented)
+
+### Which browsers are supported?
+
+- ✅ Chrome/Edge (Recommended)
+- ✅ Firefox
+- ✅ Safari (with permissions)
 
 ### Can I use my own audio file?
 
-Yes, simply replace `sample.wav` with your WAV file.
+Yes, use `call_simulator.py` and replace `sample.wav` with your file.
 
 ### Does it work with other audio formats?
 
-Deepgram supports: WAV, MP3, MP4, FLAC, OGG, WebM, etc. Just change the filename in the scripts.
+The browser interface requires PCM audio. The CLI simulator supports any format Deepgram accepts (WAV, MP3, FLAC, etc.)
 
 ## 📝 Notes
 
-- Audio file should be in WAV format
-- Deepgram API key must have available credits
-- For large files, consider using streaming instead of batch transcription
+- **Real-time transcription** requires stable internet connection
+- **Deepgram API** must have available credits
+- **Browser microphone** requires HTTPS in production (works on localhost)
+- **Interim results** may change before final confirmation
+- **Audio format**: PCM 16-bit, 16kHz, mono channel
+- **Latency**: Typically 200-500ms from speech to text
+- **Supported languages**: See [Deepgram documentation](https://developers.deepgram.com/docs/languages)
