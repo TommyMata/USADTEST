@@ -1,0 +1,255 @@
+================================================================================
+                    EXPLICACIÓN DEL FLUJO DEL SISTEMA
+           Sistema de Transcripción de Llamadas Telefónicas
+================================================================================
+
+VISIÓN GENERAL DE LA ARQUITECTURA
+================================================================================
+
+┌─────────────────────┐         ┌──────────────────────┐         ┌──────────────────┐
+│  call_simulator.py  │ ─────> │   middleware.py      │ ─────> │  Deepgram API    │
+│  (CLIENTE)          │  WS     │   (SERVIDOR)         │  HTTP   │  (SERVICIO IA)   │
+└─────────────────────┘         └──────────────────────┘         └──────────────────┘
+
+
+FLUJO PASO A PASO
+================================================================================
+
+1. EL SERVIDOR INICIA (middleware.py)
+--------------------------------------------------------------------------------
+
+Código:
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+Qué sucede:
+    ✓ Abre el endpoint WebSocket en ws://localhost:8000/stream
+    ✓ Espera conexiones de clientes
+    ✓ Imprime: [SERVER] Middleware server started
+
+
+2. EL CLIENTE SE CONECTA (call_simulator.py)
+--------------------------------------------------------------------------------
+
+Código:
+    async with websockets.connect("ws://localhost:8000/stream") as ws:
+
+Qué sucede:
+    ✓ El cliente abre una conexión WebSocket al servidor
+    ✓ El servidor acepta la conexión
+    ✓ Imprime: [CALL] Started - Client connected
+
+
+3. TRANSMISIÓN DE AUDIO (Cliente → Servidor)
+--------------------------------------------------------------------------------
+
+LADO DEL CLIENTE (call_simulator.py):
+    with open("sample.wav", "rb") as f:
+        while chunk := f.read(3200):  # Lee 3200 bytes
+            await ws.send(chunk)      # Envía por WebSocket
+            await asyncio.sleep(0.1)  # Espera 100ms (simula tiempo real)
+
+LADO DEL SERVIDOR (middleware.py):
+    while True:
+        data = await ws.receive_bytes()  # Recibe chunk
+        audio_buffer.write(data)         # Guarda en buffer
+
+Qué sucede:
+    ✓ El cliente lee sample.wav en fragmentos de 3200 bytes
+    ✓ Envía cada fragmento por WebSocket
+    ✓ El servidor recibe y acumula los fragmentos en un buffer de memoria
+    ✓ Esto simula una llamada telefónica real enviando audio en tiempo real
+    ✓ Total: 64 chunks = 204,368 bytes
+
+
+4. LA LLAMADA TERMINA (Cliente cierra conexión)
+--------------------------------------------------------------------------------
+
+LADO DEL CLIENTE:
+    # El bucle termina, la conexión se cierra automáticamente
+
+LADO DEL SERVIDOR:
+    except WebSocketDisconnect:
+        print("[CALL] Ended - Processing complete audio...")
+
+Qué sucede:
+    ✓ El cliente termina de enviar todos los chunks
+    ✓ La conexión WebSocket se cierra
+    ✓ El servidor detecta la desconexión
+    ✓ Se dispara el procesamiento con IA
+
+
+5. TRANSCRIPCIÓN CON IA (Servidor → Deepgram)
+--------------------------------------------------------------------------------
+
+Código:
+    # Obtiene todo el audio acumulado
+    audio_data = audio_buffer.getvalue()
+
+    # Envía a Deepgram IA
+    deepgram = DeepgramClient(api_key=API_KEY)
+    response = deepgram.listen.v1.media.transcribe_file(
+        request=audio_data,
+        model="nova-2",
+        smart_format=True,
+        detect_language=True
+    )
+
+Qué sucede:
+    ✓ El servidor toma el audio completo del buffer
+    ✓ Lo envía a la API de Deepgram vía HTTP
+    ✓ Deepgram IA:
+        - Detecta el idioma (inglés/español/etc)
+        - Transcribe el habla a texto
+        - Calcula un puntaje de confianza
+
+
+6. MUESTRA LOS RESULTADOS
+--------------------------------------------------------------------------------
+
+Código:
+    transcript = response.results.channels[0].alternatives[0].transcript
+    confidence = response.results.channels[0].alternatives[0].confidence
+    detected_language = response.results.channels[0].detected_language
+
+    print(f"   Text: {transcript}")
+    print(f"   Confidence: {confidence:.2%}")
+    print(f"   Language: {detected_language}")
+
+Salida:
+    ============================================================
+    CALL TRANSCRIPTION:
+    ============================================================
+       Text: Hello. This is a robotic test for development purposes.
+       Confidence: 93.16%
+       Language: en
+    ============================================================
+
+
+¿POR QUÉ ESTA ARQUITECTURA?
+================================================================================
+
+SIMULACIÓN DE SISTEMA TELEFÓNICO REAL:
+
+Componente           | Mundo Real              | Nuestro Sistema
+---------------------|-------------------------|-------------------------
+Teléfono             | Móvil/fijo              | call_simulator.py
+Línea Telefónica     | Red celular/VoIP        | Conexión WebSocket
+Centro de Llamadas   | Servidor que recibe     | middleware.py
+Servicio Transcr.    | Backend de IA           | Deepgram API
+
+
+CONCEPTOS CLAVE:
+================================================================================
+
+1. WebSocket
+   Conexión persistente bidireccional (como una línea telefónica)
+
+2. Chunks
+   Fragmentos pequeños de audio enviados continuamente (simulación en tiempo real)
+
+3. Buffer
+   Acumula todos los chunks hasta que la llamada termina
+
+4. Procesamiento por Lotes
+   Después de que la llamada termina, envía el audio completo a la IA
+
+
+RESUMEN DEL FLUJO DE DATOS
+================================================================================
+
+1. sample.wav (archivo de 204KB)
+   ↓
+2. Se lee en chunks de 3200 bytes
+   ↓
+3. Se envían chunks vía WebSocket (64 chunks × 0.1s = ~6.4 segundos de simulación)
+   ↓
+4. El servidor acumula en buffer de memoria
+   ↓
+5. La conexión se cierra (llamada termina)
+   ↓
+6. El servidor envía el audio completo a Deepgram
+   ↓
+7. Deepgram retorna: texto + confianza + idioma
+   ↓
+8. El servidor muestra los resultados
+
+
+ANALOGÍA SIMPLE
+================================================================================
+
+Imagina que estás GRABANDO UNA LLAMADA TELEFÓNICA:
+
+1. Cliente (call_simulator.py) = La persona que llama
+   - Habla por el teléfono (envía audio)
+   - La llamada dura unos segundos
+
+2. Servidor (middleware.py) = Sistema de grabación
+   - Graba todo lo que se dice
+   - Cuando la llamada termina, transcribe la grabación
+
+3. Deepgram = Servicio de transcripción profesional
+   - Escucha la grabación completa
+   - Devuelve el texto de lo que se dijo
+
+
+VENTAJA DE ESTE DISEÑO
+================================================================================
+
+Más adelante puedes REEMPLAZAR call_simulator.py con:
+
+    ✓ Un teléfono real
+    ✓ Un sistema VoIP
+    ✓ Twilio
+    ✓ Cualquier fuente de audio
+
+Y el MIDDLEWARE SEGUIRÁ FUNCIONANDO IGUAL porque solo espera recibir 
+audio por WebSocket!
+
+
+ARCHIVOS DEL PROYECTO
+================================================================================
+
+middleware.py
+    → Servidor WebSocket
+    → Recibe audio
+    → Procesa con Deepgram IA
+    → Muestra transcripción
+
+call_simulator.py
+    → Cliente WebSocket
+    → Lee sample.wav
+    → Envía chunks al servidor
+    → Simula llamada telefónica
+
+sample.wav
+    → Archivo de audio de ejemplo
+    → 204KB
+    → Usado para testing
+
+test_call_system.py
+    → Script automatizado
+    → Inicia servidor y cliente
+    → Útil para pruebas rápidas
+
+.env
+    → Configuración
+    → Contiene DEEPGRAM_API_KEY
+
+
+CÓMO EJECUTAR
+================================================================================
+
+OPCIÓN 1: Manual (2 terminales)
+
+Terminal 1:
+    python middleware.py
+
+Terminal 2:
+    python call_simulator.py
+
+
+OPCIÓN 2: Automático
+
+    python test_call_system.py
+
+
