@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Call Transcription Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 500;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #3c3;
+        }
+
+        .status.recording {
+            background: #ffeaa7;
+            color: #d63031;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        button {
+            flex: 1;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: #00b894;
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            background: #00a383;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,184,148,0.3);
+        }
+
+        .btn-stop {
+            background: #d63031;
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: #c62828;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(214,48,49,0.3);
+        }
+
+        .transcription-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 200px;
+            margin-bottom: 20px;
+        }
+
+        .transcription-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .transcription-text {
+            font-size: 18px;
+            line-height: 1.6;
+            color: #333;
+            white-space: pre-wrap;
+        }
+
+        .transcription-text.empty {
+            color: #999;
+            font-style: italic;
+        }
+
+        .metadata {
+            display: flex;
+            gap: 20px;
+            padding: 15px;
+            background: #f1f3f5;
+            border-radius: 10px;
+        }
+
+        .metadata-item {
+            flex: 1;
+            text-align: center;
+        }
+
+        .metadata-label {
+            font-size: 11px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .metadata-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: #333;
+        }
+
+        .indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .indicator.red {
+            background: #d63031;
+        }
+
+        .indicator.green {
+            background: #00b894;
+        }
+
+        .indicator.yellow {
+            background: #fdcb6e;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📞 Call Transcription Demo</h1>
+        <p class="subtitle">Real-time speech-to-text with AI</p>
+
+        <div id="status" class="status disconnected">
+            <span class="indicator red"></span>
+            <span id="statusText">Disconnected from server</span>
+        </div>
+
+        <div class="controls">
+            <button id="startBtn" class="btn-start">🎤 Start Call</button>
+            <button id="stopBtn" class="btn-stop" disabled>⏹️ End Call</button>
+        </div>
+
+        <div class="transcription-box">
+            <div class="transcription-label">Transcription:</div>
+            <div id="transcription" class="transcription-text empty">
+                Waiting for audio... Click "Start Call" to begin.
+            </div>
+        </div>
+
+        <div class="metadata">
+            <div class="metadata-item">
+                <div class="metadata-label">Confidence</div>
+                <div class="metadata-value" id="confidence">--</div>
+            </div>
+            <div class="metadata-item">
+                <div class="metadata-label">Language</div>
+                <div class="metadata-value" id="language">--</div>
+            </div>
+            <div class="metadata-item">
+                <div class="metadata-label">Duration</div>
+                <div class="metadata-value" id="duration">0s</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let websocket = null;
+        let mediaRecorder = null;
+        let audioContext = null;
+        let audioWorkletNode = null;
+        let startTime = null;
+        let durationInterval = null;
+        let fullTranscript = "";
+        let lastConfidence = 0;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusDiv = document.getElementById('status');
+        const statusText = document.getElementById('statusText');
+        const transcriptionDiv = document.getElementById('transcription');
+        const confidenceDiv = document.getElementById('confidence');
+        const languageDiv = document.getElementById('language');
+        const durationDiv = document.getElementById('duration');
+
+        // Connect to WebSocket server
+        function connectWebSocket() {
+            websocket = new WebSocket('ws://localhost:8000/stream');
+            
+            websocket.onopen = () => {
+                updateStatus('connected', 'Connected to server - Ready to record');
+                startBtn.disabled = false;
+            };
+
+            websocket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'transcript') {
+                    transcriptionDiv.classList.remove('empty');
+                    
+                    // Update transcript in real-time
+                    if (data.is_final) {
+                        // Final result - append to full transcript
+                        fullTranscript += data.text + " ";
+                        transcriptionDiv.textContent = fullTranscript;
+                    } else {
+                        // Interim result - show temporarily
+                        transcriptionDiv.textContent = fullTranscript + data.text;
+                    }
+                    
+                    // Update confidence
+                    lastConfidence = data.confidence;
+                    confidenceDiv.textContent = (data.confidence * 100).toFixed(2) + '%';
+                    
+                } else if (data.type === 'error') {
+                    transcriptionDiv.textContent = `Error: ${data.error}`;
+                    transcriptionDiv.classList.remove('empty');
+                }
+            };
+
+            websocket.onclose = () => {
+                updateStatus('disconnected', 'Disconnected from server');
+                startBtn.disabled = true;
+                
+                // Reconnect after a moment
+                setTimeout(() => {
+                    fullTranscript = "";
+                    connectWebSocket();
+                }, 1000);
+            };
+
+            websocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateStatus('disconnected', 'Connection error');
+            };
+        }
+
+        function updateStatus(state, message) {
+            statusDiv.className = `status ${state}`;
+            statusText.textContent = message;
+            
+            const indicator = statusDiv.querySelector('.indicator');
+            indicator.className = 'indicator';
+            
+            if (state === 'connected') indicator.classList.add('green');
+            else if (state === 'recording') indicator.classList.add('yellow');
+            else indicator.classList.add('red');
+        }
+
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000
+                    }
+                });
+                
+                // Create AudioContext for processing
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                // Create ScriptProcessor for raw audio data
+                const processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        
+                        // Convert Float32 to Int16 (PCM format)
+                        const pcmData = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            const s = Math.max(-1, Math.min(1, inputData[i]));
+                            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                        }
+                        
+                        // Send PCM data to server
+                        websocket.send(pcmData.buffer);
+                    }
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                // Store for cleanup
+                mediaRecorder = { stream, processor, source };
+                
+                startTime = Date.now();
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                updateStatus('recording', 'Recording... Speak now!');
+                languageDiv.textContent = 'Detecting...';
+                
+                // Update duration
+                durationInterval = setInterval(() => {
+                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                    durationDiv.textContent = `${elapsed}s`;
+                }, 100);
+
+
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                alert('Cannot access microphone. Please grant permission.');
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder) {
+                // Disconnect audio processing
+                if (mediaRecorder.processor) {
+                    mediaRecorder.processor.disconnect();
+                    mediaRecorder.source.disconnect();
+                }
+                
+                // Stop all tracks
+                if (mediaRecorder.stream) {
+                    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                }
+                
+                // Close audio context
+                if (audioContext) {
+                    audioContext.close();
+                }
+                
+                // Send END signal
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send('END');
+                }
+                
+                stopBtn.disabled = true;
+                
+                if (durationInterval) {
+                    clearInterval(durationInterval);
+                }
+                
+                updateStatus('connected', 'Call ended');
+                
+                // Re-enable start button after a moment
+                setTimeout(() => {
+                    startBtn.disabled = false;
+                }, 1000);
+            }
+        }
+
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+
+        // Connect on page load
+        connectWebSocket();
+    </script>
+</body>
+</html>

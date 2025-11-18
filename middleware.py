@@ -1,6 +1,9 @@
 import os
-import io
+import asyncio
+import websockets
+import json
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import FileResponse
 import uvicorn
 from starlette.websockets import WebSocketDisconnect
 from dotenv import load_dotenv
@@ -11,56 +14,75 @@ load_dotenv()
 app = FastAPI()
 API_KEY = os.getenv("DEEPGRAM_API_KEY")
 
+# Serve the web client
+@app.get("/")
+async def get_web_client():
+    return FileResponse("web_client.html")
+
 @app.websocket("/stream")
 async def audio_stream(ws: WebSocket):
     await ws.accept()
     print("[CALL] Started - Client connected")
     
-    # Buffer to accumulate audio chunks
-    audio_buffer = io.BytesIO()
-    total_bytes = 0
+    # Connect to Deepgram streaming
+    deepgram_url = f"wss://api.deepgram.com/v1/listen?model=nova-2&language=multi&smart_format=true&interim_results=true&punctuate=true&encoding=linear16&sample_rate=16000"
+    
+    full_transcript = []
     
     try:
-        while True:
-            data = await ws.receive_bytes()
-            total_bytes += len(data)
-            audio_buffer.write(data)
-            print(f"[CHUNK] Received: {len(data)} bytes (Total: {total_bytes} bytes)")
+        async with websockets.connect(
+            deepgram_url,
+            additional_headers={"Authorization": f"Token {API_KEY}"}
+        ) as dg_ws:
+            print("[DEEPGRAM] Connected to streaming API")
+            
+            # Task to receive from Deepgram
+            async def receive_from_deepgram():
+                async for message in dg_ws:
+                    data = json.loads(message)
+                    
+                    if "channel" in data:
+                        transcript = data["channel"]["alternatives"][0]["transcript"]
+                        if len(transcript) > 0:
+                            confidence = data["channel"]["alternatives"][0]["confidence"]
+                            is_final = data.get("is_final", False)
+                            
+                            print(f"[TRANSCRIPT] {'[FINAL]' if is_final else '[INTERIM]'} {transcript}")
+                            
+                            # Send to web client
+                            await ws.send_json({
+                                "type": "transcript",
+                                "text": transcript,
+                                "confidence": confidence,
+                                "is_final": is_final
+                            })
+                            
+                            if is_final:
+                                full_transcript.append(transcript)
+            
+            # Task to send to Deepgram
+            async def send_to_deepgram():
+                while True:
+                    message = await ws.receive()
+                    
+                    if "bytes" in message:
+                        await dg_ws.send(message["bytes"])
+                    elif "text" in message and message["text"] == "END":
+                        print("[CALL] Ended")
+                        return
+            
+            # Run both tasks concurrently
+            await asyncio.gather(
+                receive_from_deepgram(),
+                send_to_deepgram()
+            )
             
     except WebSocketDisconnect:
-        print("[CALL] Ended - Processing complete audio...")
-        
-        # Process all accumulated audio with Deepgram
-        if total_bytes > 0:
-            try:
-                deepgram = DeepgramClient(api_key=API_KEY)
-                audio_data = audio_buffer.getvalue()
-                
-                print(f"[AI] Sending {total_bytes} bytes to Deepgram for transcription...")
-                
-                response = deepgram.listen.v1.media.transcribe_file(
-                    request=audio_data,
-                    model="nova-2",
-                    smart_format=True,
-                    detect_language=True
-                )
-                
-                transcript = response.results.channels[0].alternatives[0].transcript
-                confidence = response.results.channels[0].alternatives[0].confidence
-                detected_language = response.results.channels[0].detected_language if hasattr(response.results.channels[0], 'detected_language') else "Not detected"
-                
-                print("\n" + "="*60)
-                print("CALL TRANSCRIPTION:")
-                print("="*60)
-                print(f"   Text: {transcript}")
-                print(f"   Confidence: {confidence:.2%}")
-                print(f"   Language: {detected_language}")
-                print("="*60 + "\n")
-                
-            except Exception as e:
-                print(f"[ERROR] Transcription error: {e}")
-        else:
-            print("[WARNING] No audio received to process")
+        print("[CALL] Disconnected")
+    except Exception as e:
+        print(f"[ERROR] {e}")
+    finally:
+        print(f"[FINAL TRANSCRIPT] {' '.join(full_transcript)}")
 
 if __name__ == "__main__":
     print("[SERVER] Middleware server started at ws://localhost:8000/stream")
